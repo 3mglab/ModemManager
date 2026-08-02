@@ -257,3 +257,73 @@ mm_altair_parse_vendor_pco_info (const gchar *pco_info, GError **error)
 
     return pco;
 }
+
+/*****************************************************************************/
+/* ALT3100 single-line SMS submit helpers */
+
+gchar *
+mm_altair_build_sms_submit_command (const guint8 *pdu,
+                                    gsize         pdu_len,
+                                    guint         tpdu_offset,
+                                    GError      **error)
+{
+    g_autofree gchar *hex = NULL;
+
+    if (!pdu || !pdu_len) {
+        g_set_error (error, MM_CORE_ERROR, MM_CORE_ERROR_INVALID_ARGS,
+                     "No SMS PDU given");
+        return NULL;
+    }
+    if (!tpdu_offset || tpdu_offset >= pdu_len) {
+        g_set_error (error, MM_CORE_ERROR, MM_CORE_ERROR_INVALID_ARGS,
+                     "ALT3100 requires an explicit SMSC in the submit PDU");
+        return NULL;
+    }
+    if ((guint)pdu[0] + 1 != tpdu_offset) {
+        g_set_error (error, MM_CORE_ERROR, MM_CORE_ERROR_INVALID_ARGS,
+                     "SMS PDU SMSC length does not match TPDU offset");
+        return NULL;
+    }
+
+    hex = mm_utils_bin2hexstr (pdu, pdu_len);
+    if (!hex) {
+        g_set_error (error, MM_CORE_ERROR, MM_CORE_ERROR_FAILED,
+                     "Couldn't encode SMS PDU");
+        return NULL;
+    }
+
+    return g_strdup_printf ("%%CMGS=%" G_GSIZE_FORMAT ",\"%s\"",
+                            pdu_len - tpdu_offset, hex);
+}
+
+gint
+mm_altair_parse_sms_submit_response (const gchar *response,
+                                     GError     **error)
+{
+    g_autoptr(GRegex)     regex = NULL;
+    g_autoptr(GMatchInfo) match_info = NULL;
+    guint                 reference;
+
+    if (!response) {
+        g_set_error (error, MM_CORE_ERROR, MM_CORE_ERROR_INVALID_ARGS,
+                     "No ALT3100 SMS submit response given");
+        return -1;
+    }
+
+    regex = g_regex_new ("(?:^|[\\r\\n])\\%CMGS:\\s*(\\d+)(?:[\\r\\n]|$)",
+                         G_REGEX_RAW, 0, NULL);
+    g_assert (regex);
+    if (!g_regex_match (regex, response, 0, &match_info) ||
+        !mm_get_uint_from_match_info (match_info, 1, &reference)) {
+        g_set_error (error, MM_CORE_ERROR, MM_CORE_ERROR_FAILED,
+                     "Couldn't parse ALT3100 SMS message reference from '%s'",
+                     response);
+        return -1;
+    }
+    if (reference > G_MAXINT) {
+        g_set_error (error, MM_CORE_ERROR, MM_CORE_ERROR_FAILED,
+                     "ALT3100 SMS message reference is out of range");
+        return -1;
+    }
+    return (gint)reference;
+}

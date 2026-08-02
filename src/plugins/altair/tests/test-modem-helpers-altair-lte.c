@@ -174,6 +174,34 @@ test_parse_vendor_pco_info (void)
     }
 }
 
+static void
+test_sms_submit_helpers (void)
+{
+    static const guint8 pdu[] = {
+        0x07, 0x91, 0x97, 0x58, 0x35, 0x07, 0x96, 0xf0,
+        0x01, 0x00, 0x0b, 0x91, 0x97, 0x18, 0x87, 0x91, 0x09, 0xf1,
+        0x00, 0x08, 0x04, 0x04, 0x22, 0x04, 0x35,
+    };
+    g_autofree gchar *command = NULL;
+    g_autoptr(GError) error = NULL;
+
+    command = mm_altair_build_sms_submit_command (pdu, sizeof (pdu), 8, &error);
+    g_assert_no_error (error);
+    g_assert_cmpstr (command, ==,
+                     "%CMGS=17,\"07919758350796F001000B919718879109F100080404220435\"");
+    g_assert_cmpint (mm_altair_parse_sms_submit_response ("%CMGS: 4\r\n", &error), ==, 4);
+    g_assert_no_error (error);
+
+    g_clear_pointer (&command, g_free);
+    command = mm_altair_build_sms_submit_command (pdu + 8, sizeof (pdu) - 8, 0, &error);
+    g_assert_null (command);
+    g_assert_error (error, MM_CORE_ERROR, MM_CORE_ERROR_INVALID_ARGS);
+    g_clear_error (&error);
+
+    g_assert_cmpint (mm_altair_parse_sms_submit_response ("OK\r\n", &error), ==, -1);
+    g_assert_error (error, MM_CORE_ERROR, MM_CORE_ERROR_FAILED);
+}
+
 int main (int argc, char **argv)
 {
     setlocale (LC_ALL, "");
@@ -184,6 +212,7 @@ int main (int argc, char **argv)
     g_test_add_func ("/MM/altair/ceer", test_ceer);
     g_test_add_func ("/MM/altair/parse_cid", test_parse_cid);
     g_test_add_func ("/MM/altair/parse_vendor_pco_info", test_parse_vendor_pco_info);
+    g_test_add_func ("/MM/altair/sms_submit_helpers", test_sms_submit_helpers);
 
     return g_test_run ();
 }
