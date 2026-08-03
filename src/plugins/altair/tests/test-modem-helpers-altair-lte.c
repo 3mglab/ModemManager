@@ -202,6 +202,33 @@ test_sms_submit_helpers (void)
     g_assert_error (error, MM_CORE_ERROR, MM_CORE_ERROR_FAILED);
 }
 
+static void
+test_sms_notification_helpers (void)
+{
+    g_autofree gchar *pdu = NULL;
+    g_autoptr(GError) error = NULL;
+
+    pdu = mm_altair_parse_sms_notification (
+        "\r\n%CMT: 17, 07919758350796F0, 01000B919718879109F100080404220435\r\n",
+        "%CMT:", &error);
+    g_assert_no_error (error);
+    g_assert_cmpstr (pdu, ==, "07919758350796F001000B919718879109F100080404220435");
+
+    g_clear_pointer (&pdu, g_free);
+    pdu = mm_altair_parse_sms_notification (
+        "%CMT: 16, 07919758350796F0, 01000B919718879109F100080404220435\r\n",
+        "%CMT:", &error);
+    g_assert_null (pdu);
+    g_assert_error (error, MM_CORE_ERROR, MM_CORE_ERROR_FAILED);
+    g_clear_error (&error);
+
+    pdu = mm_altair_parse_sms_notification (
+        "%CMT: 17, 06919758350796F0, 01000B919718879109F100080404220435\r\n",
+        "%CMT:", &error);
+    g_assert_null (pdu);
+    g_assert_error (error, MM_CORE_ERROR, MM_CORE_ERROR_FAILED);
+}
+
 int main (int argc, char **argv)
 {
     setlocale (LC_ALL, "");
@@ -213,6 +240,7 @@ int main (int argc, char **argv)
     g_test_add_func ("/MM/altair/parse_cid", test_parse_cid);
     g_test_add_func ("/MM/altair/parse_vendor_pco_info", test_parse_vendor_pco_info);
     g_test_add_func ("/MM/altair/sms_submit_helpers", test_sms_submit_helpers);
+    g_test_add_func ("/MM/altair/sms_notification_helpers", test_sms_notification_helpers);
 
     return g_test_run ();
 }

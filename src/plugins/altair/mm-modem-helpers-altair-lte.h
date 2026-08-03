@@ -42,5 +42,8 @@ gchar *mm_altair_build_sms_submit_command (const guint8 *pdu,
                                            GError **error);
 gint mm_altair_parse_sms_submit_response (const gchar *response,
                                           GError **error);
+gchar *mm_altair_parse_sms_notification (const gchar *notification,
+                                         const gchar *prefix,
+                                         GError **error);
 
 #endif  /* MM_MODEM_HELPERS_ALTAIR_H */

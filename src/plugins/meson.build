@@ -331,6 +331,7 @@ if plugins_options['altair-lte']
   sources = files(
     'altair/mm-broadband-bearer-altair-lte.c',
     'altair/mm-broadband-modem-altair-lte.c',
+    'altair/mm-sms-altair-lte.c',
     'altair/mm-plugin-altair-lte.c',
   )
 

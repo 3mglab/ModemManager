@@ -38,6 +38,8 @@
 #include "mm-log-object.h"
 #include "mm-modem-helpers.h"
 #include "mm-modem-helpers-altair-lte.h"
+#include "mm-sms-altair-lte.h"
+#include "mm-sms-part-3gpp.h"
 #include "mm-serial-parsers.h"
 #include "mm-bearer-list.h"
 
@@ -69,6 +71,8 @@ struct _MMBroadbandModemAltairLtePrivate {
     GRegex *statcm_regex;
     /* Regex for PCO notifications */
     GRegex *pcoinfo_regex;
+    /* Direct-delivery SMS notification */
+    GRegex *sms_cmt_regex;
 
     GList *pco_list;
 };
@@ -1203,6 +1207,8 @@ mm_broadband_modem_altair_lte_init (MMBroadbandModemAltairLte *self)
                                             G_REGEX_RAW | G_REGEX_OPTIMIZE, 0, NULL);
     self->priv->pcoinfo_regex = g_regex_new ("\\r\\n\\%PCOINFO:\\s*(\\d*),([^,\\s]*),([^,\\s]*)\\r+\\n",
                                              G_REGEX_RAW | G_REGEX_OPTIMIZE, 0, NULL);
+    self->priv->sms_cmt_regex = g_regex_new ("\\r\\n\\%CMT:\\s*\\d+,\\s*[0-9A-Fa-f]+,\\s*[0-9A-Fa-f]+\\r+\\n",
+                                             G_REGEX_RAW | G_REGEX_OPTIMIZE, 0, NULL);
 }
 
 static void
@@ -1215,6 +1221,7 @@ finalize (GObject *object)
     g_regex_unref (self->priv->sim_refresh_regex);
     g_regex_unref (self->priv->statcm_regex);
     g_regex_unref (self->priv->pcoinfo_regex);
+    g_regex_unref (self->priv->sms_cmt_regex);
     G_OBJECT_CLASS (mm_broadband_modem_altair_lte_parent_class)->finalize (object);
 }
 
@@ -1286,12 +1293,191 @@ iface_modem_3gpp_init (MMIfaceModem3gppInterface *iface)
     iface->load_operator_name_finish = modem_3gpp_load_operator_name_finish;
 }
 
+/*****************************************************************************/
+/* Messaging interface */
+
+static gboolean
+modem_messaging_task_finish (MMIfaceModemMessaging *self,
+                             GAsyncResult *res,
+                             GError **error)
+{
+    return g_task_propagate_boolean (G_TASK (res), error);
+}
+
+static gboolean
+modem_messaging_command_finish (MMIfaceModemMessaging *self,
+                                GAsyncResult *res,
+                                GError **error)
+{
+    return !!mm_base_modem_at_command_finish (MM_BASE_MODEM (self), res, error);
+}
+
+static void
+modem_messaging_check_support (MMIfaceModemMessaging *self,
+                               GAsyncReadyCallback callback,
+                               gpointer user_data)
+{
+    GTask *task;
+
+    task = g_task_new (self, NULL, callback, user_data);
+    g_task_return_boolean (task, TRUE);
+    g_object_unref (task);
+}
+
+static gboolean
+modem_messaging_check_support_finish (MMIfaceModemMessaging *self,
+                                      GAsyncResult *res,
+                                      GError **error)
+{
+    return g_task_propagate_boolean (G_TASK (res), error);
+}
+
+static void
+modem_messaging_setup_sms_format (MMIfaceModemMessaging *self,
+                                  GAsyncReadyCallback callback,
+                                  gpointer user_data)
+{
+    mm_base_modem_at_command (MM_BASE_MODEM (self), "+CMGF=0", 3, FALSE,
+                              callback, user_data);
+}
+
+static void
+sms_ack_ready (MMBaseModem *self,
+               GAsyncResult *res,
+               gpointer user_data)
+{
+    g_autoptr(GError) error = NULL;
+
+    mm_base_modem_at_command_finish (self, res, &error);
+    if (error)
+        mm_obj_warn (self, "couldn't acknowledge ALT3100 SMS: %s", error->message);
+}
+
+static void
+sms_cmt_received (MMPortSerialAt *port,
+                  GMatchInfo *info,
+                  MMBroadbandModemAltairLte *self)
+{
+    g_autoptr(GError) error = NULL;
+    g_autofree gchar *notification = NULL;
+    g_autofree gchar *pdu = NULL;
+    MMSmsPart *part;
+
+    notification = g_match_info_fetch (info, 0);
+    pdu = mm_altair_parse_sms_notification (notification, "%CMT:", &error);
+    if (!pdu) {
+        mm_obj_warn (self, "couldn't parse ALT3100 SMS notification: %s", error->message);
+        return;
+    }
+
+    part = mm_sms_part_3gpp_new_from_pdu (SMS_PART_INVALID_INDEX, pdu, self, &error);
+    if (!part) {
+        mm_obj_warn (self, "couldn't decode ALT3100 SMS PDU: %s", error->message);
+        return;
+    }
+
+    if (!mm_iface_modem_messaging_take_part (MM_IFACE_MODEM_MESSAGING (self),
+                                             mm_broadband_modem_create_sms (MM_BROADBAND_MODEM (self)),
+                                             part,
+                                             MM_SMS_STATE_RECEIVED,
+                                             MM_SMS_STORAGE_UNKNOWN,
+                                             &error)) {
+        mm_obj_warn (self, "couldn't add ALT3100 SMS: %s", error->message);
+        return;
+    }
+
+    /* Acknowledge only after the PDU has safely entered ModemManager's list. */
+    mm_base_modem_at_command (MM_BASE_MODEM (self), "%CNMA=1,1,\"00\"", 3, FALSE,
+                              (GAsyncReadyCallback)sms_ack_ready, NULL);
+}
+
+static void
+set_sms_unsolicited_handler (MMIfaceModemMessaging *messaging,
+                             gboolean enable,
+                             GAsyncReadyCallback callback,
+                             gpointer user_data)
+{
+    MMBroadbandModemAltairLte *self = MM_BROADBAND_MODEM_ALTAIR_LTE (messaging);
+    MMPortSerialAt *ports[2];
+    GTask *task;
+    guint i;
+
+    ports[0] = mm_base_modem_peek_port_primary (MM_BASE_MODEM (self));
+    ports[1] = mm_base_modem_peek_port_secondary (MM_BASE_MODEM (self));
+    for (i = 0; i < G_N_ELEMENTS (ports); i++) {
+        if (!ports[i])
+            continue;
+        mm_port_serial_at_add_unsolicited_msg_handler (
+            ports[i], self->priv->sms_cmt_regex,
+            enable ? (MMPortSerialAtUnsolicitedMsgFn)sms_cmt_received : NULL,
+            enable ? self : NULL, NULL);
+    }
+
+    task = g_task_new (self, NULL, callback, user_data);
+    g_task_return_boolean (task, TRUE);
+    g_object_unref (task);
+}
+
+static void
+modem_messaging_setup_unsolicited_events (MMIfaceModemMessaging *self,
+                                          GAsyncReadyCallback callback,
+                                          gpointer user_data)
+{
+    set_sms_unsolicited_handler (self, TRUE, callback, user_data);
+}
+
+static void
+modem_messaging_cleanup_unsolicited_events (MMIfaceModemMessaging *self,
+                                            GAsyncReadyCallback callback,
+                                            gpointer user_data)
+{
+    set_sms_unsolicited_handler (self, FALSE, callback, user_data);
+}
+
+static void
+modem_messaging_enable_unsolicited_events (MMIfaceModemMessaging *self,
+                                           GAsyncReadyCallback callback,
+                                           gpointer user_data)
+{
+    mm_base_modem_at_command (MM_BASE_MODEM (self), "+CNMI=2,2,0,0,0", 3, FALSE,
+                              callback, user_data);
+}
+
+static void
+modem_messaging_disable_unsolicited_events (MMIfaceModemMessaging *self,
+                                            GAsyncReadyCallback callback,
+                                            gpointer user_data)
+{
+    mm_base_modem_at_command (MM_BASE_MODEM (self), "+CNMI=0,0,0,0,0", 3, FALSE,
+                              callback, user_data);
+}
+
+static MMBaseSms *
+modem_messaging_create_sms (MMBroadbandModem *self)
+{
+    MMSmsStorage default_storage;
+
+    g_object_get (self,
+                  MM_IFACE_MODEM_MESSAGING_SMS_DEFAULT_STORAGE, &default_storage,
+                  NULL);
+    return mm_sms_altair_lte_new (MM_BASE_MODEM (self), TRUE, default_storage);
+}
+
 static void
 iface_modem_messaging_init (MMIfaceModemMessagingInterface *iface)
 {
-    /* Currently no messaging is implemented - so skip checking*/
-    iface->check_support = NULL;
-    iface->check_support_finish = NULL;
+    iface->check_support = modem_messaging_check_support;
+    iface->check_support_finish = modem_messaging_check_support_finish;
+    iface->setup_sms_format = modem_messaging_setup_sms_format;
+    iface->setup_sms_format_finish = modem_messaging_command_finish;
+    iface->setup_unsolicited_events = modem_messaging_setup_unsolicited_events;
+    iface->setup_unsolicited_events_finish = modem_messaging_task_finish;
+    iface->cleanup_unsolicited_events = modem_messaging_cleanup_unsolicited_events;
+    iface->cleanup_unsolicited_events_finish = modem_messaging_task_finish;
+    iface->enable_unsolicited_events = modem_messaging_enable_unsolicited_events;
+    iface->enable_unsolicited_events_finish = modem_messaging_command_finish;
+    iface->disable_unsolicited_events = modem_messaging_disable_unsolicited_events;
+    iface->disable_unsolicited_events_finish = modem_messaging_command_finish;
 }
 
 static void
@@ -1304,6 +1490,7 @@ mm_broadband_modem_altair_lte_class_init (MMBroadbandModemAltairLteClass *klass)
 
     object_class->finalize = finalize;
     broadband_modem_class->setup_ports = setup_ports;
+    broadband_modem_class->create_sms = modem_messaging_create_sms;
 
     /* The Altair LTE modem reboots itself upon receiving an ATZ command. We
      * need to skip the default implementation in MMBroadbandModem to prevent

@@ -327,3 +327,49 @@ mm_altair_parse_sms_submit_response (const gchar *response,
     }
     return (gint)reference;
 }
+
+gchar *
+mm_altair_parse_sms_notification (const gchar *notification,
+                                  const gchar *prefix,
+                                  GError      **error)
+{
+    g_autoptr(GRegex)     regex = NULL;
+    g_autoptr(GMatchInfo) match_info = NULL;
+    g_autofree gchar     *escaped_prefix = NULL;
+    g_autofree gchar     *pattern = NULL;
+    g_autofree gchar     *smsc = NULL;
+    g_autofree gchar     *tpdu = NULL;
+    guint                 tpdu_len;
+    guint                 smsc_len;
+
+    if (!notification || !prefix) {
+        g_set_error (error, MM_CORE_ERROR, MM_CORE_ERROR_INVALID_ARGS,
+                     "Missing ALT3100 SMS notification or prefix");
+        return NULL;
+    }
+
+    escaped_prefix = g_regex_escape_string (prefix, -1);
+    pattern = g_strdup_printf ("(?:^|[\\r\\n])%s\\s*(\\d+),\\s*([0-9A-Fa-f]+),\\s*([0-9A-Fa-f]+)(?:[\\r\\n]|$)",
+                               escaped_prefix);
+    regex = g_regex_new (pattern, G_REGEX_RAW, 0, NULL);
+    g_assert (regex);
+    if (!g_regex_match (regex, notification, 0, &match_info) ||
+        !mm_get_uint_from_match_info (match_info, 1, &tpdu_len)) {
+        g_set_error (error, MM_CORE_ERROR, MM_CORE_ERROR_FAILED,
+                     "Couldn't parse ALT3100 %s notification", prefix);
+        return NULL;
+    }
+
+    smsc = g_match_info_fetch (match_info, 2);
+    tpdu = g_match_info_fetch (match_info, 3);
+    if (!smsc || strlen (smsc) < 2 || strlen (smsc) % 2 ||
+        !tpdu || strlen (tpdu) % 2 || strlen (tpdu) / 2 != tpdu_len ||
+        !mm_get_uint_from_hex_str (smsc, 2, &smsc_len) ||
+        (smsc_len + 1) * 2 != strlen (smsc)) {
+        g_set_error (error, MM_CORE_ERROR, MM_CORE_ERROR_FAILED,
+                     "Invalid lengths in ALT3100 %s notification", prefix);
+        return NULL;
+    }
+
+    return g_strconcat (smsc, tpdu, NULL);
+}
