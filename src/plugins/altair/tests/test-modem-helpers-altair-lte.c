@@ -216,6 +216,13 @@ test_sms_notification_helpers (void)
 
     g_clear_pointer (&pdu, g_free);
     pdu = mm_altair_parse_sms_notification (
+        "\r\n%CDS: 17, 07919758350796F0, 01000B919718879109F100080404220435\r\n",
+        "%CDS:", &error);
+    g_assert_no_error (error);
+    g_assert_cmpstr (pdu, ==, "07919758350796F001000B919718879109F100080404220435");
+
+    g_clear_pointer (&pdu, g_free);
+    pdu = mm_altair_parse_sms_notification (
         "%CMT: 16, 07919758350796F0, 01000B919718879109F100080404220435\r\n",
         "%CMT:", &error);
     g_assert_null (pdu);

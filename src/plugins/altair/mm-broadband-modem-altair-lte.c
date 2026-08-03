@@ -73,6 +73,8 @@ struct _MMBroadbandModemAltairLtePrivate {
     GRegex *pcoinfo_regex;
     /* Direct-delivery SMS notification */
     GRegex *sms_cmt_regex;
+    /* Direct-delivery SMS status report */
+    GRegex *sms_cds_regex;
 
     GList *pco_list;
 };
@@ -1209,6 +1211,8 @@ mm_broadband_modem_altair_lte_init (MMBroadbandModemAltairLte *self)
                                              G_REGEX_RAW | G_REGEX_OPTIMIZE, 0, NULL);
     self->priv->sms_cmt_regex = g_regex_new ("\\r\\n\\%CMT:\\s*\\d+,\\s*[0-9A-Fa-f]+,\\s*[0-9A-Fa-f]+\\r+\\n",
                                              G_REGEX_RAW | G_REGEX_OPTIMIZE, 0, NULL);
+    self->priv->sms_cds_regex = g_regex_new ("\\r\\n\\%CDS:\\s*\\d+,\\s*[0-9A-Fa-f]+,\\s*[0-9A-Fa-f]+\\r+\\n",
+                                             G_REGEX_RAW | G_REGEX_OPTIMIZE, 0, NULL);
 }
 
 static void
@@ -1222,6 +1226,7 @@ finalize (GObject *object)
     g_regex_unref (self->priv->statcm_regex);
     g_regex_unref (self->priv->pcoinfo_regex);
     g_regex_unref (self->priv->sms_cmt_regex);
+    g_regex_unref (self->priv->sms_cds_regex);
     G_OBJECT_CLASS (mm_broadband_modem_altair_lte_parent_class)->finalize (object);
 }
 
@@ -1354,9 +1359,9 @@ sms_ack_ready (MMBaseModem *self,
 }
 
 static void
-sms_cmt_received (MMPortSerialAt *port,
-                  GMatchInfo *info,
-                  MMBroadbandModemAltairLte *self)
+sms_direct_received (MMPortSerialAt *port,
+                     GMatchInfo *info,
+                     MMBroadbandModemAltairLte *self)
 {
     g_autoptr(GError) error = NULL;
     g_autofree gchar *notification = NULL;
@@ -1364,7 +1369,8 @@ sms_cmt_received (MMPortSerialAt *port,
     MMSmsPart *part;
 
     notification = g_match_info_fetch (info, 0);
-    pdu = mm_altair_parse_sms_notification (notification, "%CMT:", &error);
+    pdu = mm_altair_parse_sms_notification (
+        notification, strstr (notification, "%CDS:") ? "%CDS:" : "%CMT:", &error);
     if (!pdu) {
         mm_obj_warn (self, "couldn't parse ALT3100 SMS notification: %s", error->message);
         return;
@@ -1409,7 +1415,11 @@ set_sms_unsolicited_handler (MMIfaceModemMessaging *messaging,
             continue;
         mm_port_serial_at_add_unsolicited_msg_handler (
             ports[i], self->priv->sms_cmt_regex,
-            enable ? (MMPortSerialAtUnsolicitedMsgFn)sms_cmt_received : NULL,
+            enable ? (MMPortSerialAtUnsolicitedMsgFn)sms_direct_received : NULL,
+            enable ? self : NULL, NULL);
+        mm_port_serial_at_add_unsolicited_msg_handler (
+            ports[i], self->priv->sms_cds_regex,
+            enable ? (MMPortSerialAtUnsolicitedMsgFn)sms_direct_received : NULL,
             enable ? self : NULL, NULL);
     }
 
@@ -1439,7 +1449,7 @@ modem_messaging_enable_unsolicited_events (MMIfaceModemMessaging *self,
                                            GAsyncReadyCallback callback,
                                            gpointer user_data)
 {
-    mm_base_modem_at_command (MM_BASE_MODEM (self), "+CNMI=2,2,0,0,0", 3, FALSE,
+    mm_base_modem_at_command (MM_BASE_MODEM (self), "+CNMI=2,2,0,1,0", 3, FALSE,
                               callback, user_data);
 }
 
