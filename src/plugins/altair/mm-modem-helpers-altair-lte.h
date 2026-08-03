@@ -35,6 +35,9 @@ gint mm_altair_parse_cid (const gchar *response, GError **error);
 /* %PCOINFO response parser */
 MMPco *mm_altair_parse_vendor_pco_info (const gchar *pco_info, GError **error);
 
+/* Device-specific feature support */
+gboolean mm_altair_is_sms_supported_product (guint16 product_id);
+
 /* ALT3100 single-line SMS submit helpers */
 gchar *mm_altair_build_sms_submit_command (const guint8 *pdu,
                                            gsize pdu_len,

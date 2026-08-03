@@ -25,6 +25,16 @@
 
 #define MM_ALTAIR_IMS_PDN_CID           1
 #define MM_ALTAIR_INTERNET_PDN_CID      3
+#define MM_ALTAIR_ALT3100_PRODUCT_ID     0x0041
+
+/*****************************************************************************/
+/* Device-specific feature support */
+
+gboolean
+mm_altair_is_sms_supported_product (guint16 product_id)
+{
+    return product_id == MM_ALTAIR_ALT3100_PRODUCT_ID;
+}
 
 /*****************************************************************************/
 /* Bands response parser */

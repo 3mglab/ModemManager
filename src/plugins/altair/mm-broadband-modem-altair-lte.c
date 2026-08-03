@@ -1325,7 +1325,10 @@ modem_messaging_check_support (MMIfaceModemMessaging *self,
     GTask *task;
 
     task = g_task_new (self, NULL, callback, user_data);
-    g_task_return_boolean (task, TRUE);
+    g_task_return_boolean (
+        task,
+        mm_altair_is_sms_supported_product (
+            mm_base_modem_get_product_id (MM_BASE_MODEM (self))));
     g_object_unref (task);
 }
 

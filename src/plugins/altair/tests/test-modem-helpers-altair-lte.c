@@ -236,6 +236,14 @@ test_sms_notification_helpers (void)
     g_assert_error (error, MM_CORE_ERROR, MM_CORE_ERROR_FAILED);
 }
 
+static void
+test_sms_supported_product (void)
+{
+    g_assert_true (mm_altair_is_sms_supported_product (0x0041));
+    g_assert_false (mm_altair_is_sms_supported_product (0x0047));
+    g_assert_false (mm_altair_is_sms_supported_product (0x0000));
+}
+
 int main (int argc, char **argv)
 {
     setlocale (LC_ALL, "");
@@ -248,6 +256,7 @@ int main (int argc, char **argv)
     g_test_add_func ("/MM/altair/parse_vendor_pco_info", test_parse_vendor_pco_info);
     g_test_add_func ("/MM/altair/sms_submit_helpers", test_sms_submit_helpers);
     g_test_add_func ("/MM/altair/sms_notification_helpers", test_sms_notification_helpers);
+    g_test_add_func ("/MM/altair/sms_supported_product", test_sms_supported_product);
 
     return g_test_run ();
 }
