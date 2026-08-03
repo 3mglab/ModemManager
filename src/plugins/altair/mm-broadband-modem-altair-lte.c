@@ -1258,7 +1258,7 @@ iface_modem_init (MMIfaceModemInterface *iface)
 static void
 iface_modem_3gpp_ussd_init (MMIfaceModem3gppUssdInterface *iface)
 {
-    /* we don't have USSD support */
+    /* ALT3100 firmware implements AT+CUSD as an immediate not-supported result. */
     iface->check_support = NULL;
     iface->check_support_finish = NULL;
 }

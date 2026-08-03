@@ -3,6 +3,7 @@
 #include <config.h>
 
 #include "mm-base-modem-at.h"
+#include "mm-bind.h"
 #include "mm-log-object.h"
 #include "mm-modem-helpers-altair-lte.h"
 #include "mm-sms-altair-lte.h"
@@ -157,6 +158,7 @@ mm_sms_altair_lte_new (MMBaseModem *modem,
     MMSmsAltairLte *self;
 
     self = g_object_new (MM_TYPE_SMS_ALTAIR_LTE,
+                         MM_BIND_TO, G_OBJECT (modem),
                          MM_BASE_SMS_IS_3GPP, is_3gpp,
                          MM_BASE_SMS_DEFAULT_STORAGE, default_storage,
                          NULL);
