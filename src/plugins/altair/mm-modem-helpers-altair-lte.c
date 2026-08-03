@@ -339,6 +339,7 @@ mm_altair_parse_sms_notification (const gchar *notification,
     g_autofree gchar     *pattern = NULL;
     g_autofree gchar     *smsc = NULL;
     g_autofree gchar     *tpdu = NULL;
+    gchar                 smsc_len_hex[3] = { 0 };
     guint                 tpdu_len;
     guint                 smsc_len;
 
@@ -362,9 +363,13 @@ mm_altair_parse_sms_notification (const gchar *notification,
 
     smsc = g_match_info_fetch (match_info, 2);
     tpdu = g_match_info_fetch (match_info, 3);
+    if (smsc && strlen (smsc) >= 2) {
+        smsc_len_hex[0] = smsc[0];
+        smsc_len_hex[1] = smsc[1];
+    }
     if (!smsc || strlen (smsc) < 2 || strlen (smsc) % 2 ||
         !tpdu || strlen (tpdu) % 2 || strlen (tpdu) / 2 != tpdu_len ||
-        !mm_get_uint_from_hex_str (smsc, 2, &smsc_len) ||
+        !mm_get_uint_from_hex_str (smsc_len_hex, &smsc_len) ||
         (smsc_len + 1) * 2 != strlen (smsc)) {
         g_set_error (error, MM_CORE_ERROR, MM_CORE_ERROR_FAILED,
                      "Invalid lengths in ALT3100 %s notification", prefix);
