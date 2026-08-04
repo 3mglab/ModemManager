@@ -69,6 +69,39 @@ sms_send_ready (MMBaseModem *modem,
 }
 
 static void
+sms_load_smsc_ready (MMBaseModem *modem,
+                     GAsyncResult *res,
+                     GTask *task)
+{
+    SmsSendContext *ctx;
+    g_autoptr(GError) error = NULL;
+    g_autofree gchar *smsc = NULL;
+    const gchar *response;
+    GList *l;
+
+    response = mm_base_modem_at_command_finish (modem, res, &error);
+    if (!response) {
+        g_task_return_error (task, g_steal_pointer (&error));
+        g_object_unref (task);
+        return;
+    }
+
+    smsc = mm_altair_parse_sms_parameter_record_smsc (response, &error);
+    if (!smsc) {
+        g_task_return_error (task, g_steal_pointer (&error));
+        g_object_unref (task);
+        return;
+    }
+
+    ctx = g_task_get_task_data (task);
+    for (l = ctx->current; l; l = g_list_next (l)) {
+        if (!mm_sms_part_get_smsc (l->data))
+            mm_sms_part_set_smsc (l->data, smsc);
+    }
+    sms_send_next_part (task);
+}
+
+static void
 sms_send_next_part (GTask *task)
 {
     MMSmsAltairLte *self;
@@ -84,6 +117,17 @@ sms_send_next_part (GTask *task)
     if (!ctx->current) {
         g_task_return_boolean (task, TRUE);
         g_object_unref (task);
+        return;
+    }
+
+    /* AT+CSCA is a stub in this firmware, while the proprietary %CMGS path
+     * requires a complete PDU with an explicit SMSC. Read record 1 of the
+     * active SIM's EF-SMSP; P3=0 asks the modem for the whole record. */
+    if (!mm_sms_part_get_smsc (ctx->current->data)) {
+        mm_base_modem_at_command (ctx->modem,
+                                  "+CRSM=178,28482,1,4,0", 3, FALSE,
+                                  (GAsyncReadyCallback)sms_load_smsc_ready,
+                                  task);
         return;
     }
 

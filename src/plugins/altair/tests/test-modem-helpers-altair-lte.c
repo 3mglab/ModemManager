@@ -237,6 +237,47 @@ test_sms_notification_helpers (void)
 }
 
 static void
+test_sms_parameter_record_smsc (void)
+{
+    g_autofree gchar *smsc = NULL;
+    g_autoptr(GError) error = NULL;
+
+    smsc = mm_altair_parse_sms_parameter_record_smsc (
+        "+CRSM: 144,0,"
+        "596F7461"
+        "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        "FD"
+        "FFFFFFFFFFFFFFFFFFFFFFFF"
+        "07919785350796F0"
+        "FFFFFFFFFFFFFF",
+        &error);
+    g_assert_no_error (error);
+    g_assert_cmpstr (smsc, ==, "+79585370690");
+
+    g_clear_pointer (&smsc, g_free);
+    smsc = mm_altair_parse_sms_parameter_record_smsc (
+        "+CRSM: 105,129,00", &error);
+    g_assert_null (smsc);
+    g_assert_error (error, MM_CORE_ERROR, MM_CORE_ERROR_FAILED);
+    g_clear_error (&error);
+
+    smsc = mm_altair_parse_sms_parameter_record_smsc (
+        "+CRSM: 144,0,00010203", &error);
+    g_assert_null (smsc);
+    g_assert_error (error, MM_CORE_ERROR, MM_CORE_ERROR_FAILED);
+    g_clear_error (&error);
+
+    smsc = mm_altair_parse_sms_parameter_record_smsc (
+        "+CRSM: 144,0,"
+        "FFFFFFFFFFFFFFFFFFFFFFFFFF"
+        "00"
+        "FFFFFFFFFFFFFFFFFFFFFFFFFFFF",
+        &error);
+    g_assert_null (smsc);
+    g_assert_error (error, MM_CORE_ERROR, MM_CORE_ERROR_FAILED);
+}
+
+static void
 test_sms_supported_product (void)
 {
     g_assert_true (mm_altair_is_sms_supported_product (0x0041));
@@ -256,6 +297,7 @@ int main (int argc, char **argv)
     g_test_add_func ("/MM/altair/parse_vendor_pco_info", test_parse_vendor_pco_info);
     g_test_add_func ("/MM/altair/sms_submit_helpers", test_sms_submit_helpers);
     g_test_add_func ("/MM/altair/sms_notification_helpers", test_sms_notification_helpers);
+    g_test_add_func ("/MM/altair/sms_parameter_record_smsc", test_sms_parameter_record_smsc);
     g_test_add_func ("/MM/altair/sms_supported_product", test_sms_supported_product);
 
     return g_test_run ();

@@ -1452,7 +1452,10 @@ modem_messaging_enable_unsolicited_events (MMIfaceModemMessaging *self,
                                            GAsyncReadyCallback callback,
                                            gpointer user_data)
 {
-    mm_base_modem_at_command (MM_BASE_MODEM (self), "+CNMI=2,2,0,1,0", 3, FALSE,
+    /* This ALT3100 firmware rejects the standard ds=1 with +CMS ERROR: 304,
+     * but advertises and accepts ds=2. Requested reports are then delivered
+     * through the vendor %CDS unsolicited indication. */
+    mm_base_modem_at_command (MM_BASE_MODEM (self), "+CNMI=2,2,0,2,0", 3, FALSE,
                               callback, user_data);
 }
 

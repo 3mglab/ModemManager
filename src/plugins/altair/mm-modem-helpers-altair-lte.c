@@ -21,6 +21,8 @@
 #define _LIBMM_INSIDE_MM
 #include <libmm-glib.h>
 
+#include "mm-modem-helpers.h"
+#include "mm-utils.h"
 #include "mm-modem-helpers-altair-lte.h"
 
 #define MM_ALTAIR_IMS_PDN_CID           1
@@ -387,4 +389,82 @@ mm_altair_parse_sms_notification (const gchar *notification,
     }
 
     return g_strconcat (smsc, tpdu, NULL);
+}
+
+gchar *
+mm_altair_parse_sms_parameter_record_smsc (const gchar *response,
+                                            GError     **error)
+{
+    g_autofree gchar  *hex = NULL;
+    g_autofree guint8 *record = NULL;
+    g_autoptr(GString) number = NULL;
+    const guint8      *smsc;
+    gsize              record_len = 0;
+    guint              sw1;
+    guint              sw2;
+    guint              smsc_len;
+    guint              i;
+
+    if (!mm_3gpp_parse_crsm_response (response, &sw1, &sw2, &hex, error))
+        return NULL;
+    if (sw1 != 0x90 || sw2 != 0x00) {
+        g_set_error (error, MM_CORE_ERROR, MM_CORE_ERROR_FAILED,
+                     "SIM EF-SMSP read failed (SW1=%u, SW2=%u)", sw1, sw2);
+        return NULL;
+    }
+
+    record = mm_utils_hexstr2bin (hex, -1, &record_len, error);
+    if (!record)
+        return NULL;
+
+    /* TS 51.011 EF-SMSP ends in a fixed 28-byte parameter block:
+     * parameter indicator (1), destination address (12), service centre
+     * address (12), PID (1), DCS (1), and validity period (1). */
+    if (record_len < 28) {
+        g_set_error (error, MM_CORE_ERROR, MM_CORE_ERROR_FAILED,
+                     "SIM EF-SMSP record is too short");
+        return NULL;
+    }
+
+    smsc = &record[record_len - 15];
+    smsc_len = smsc[0];
+    if (smsc_len < 2 || smsc_len > 11) {
+        g_set_error (error, MM_CORE_ERROR, MM_CORE_ERROR_FAILED,
+                     "SIM EF-SMSP has no valid service centre address");
+        return NULL;
+    }
+
+    number = g_string_new (NULL);
+    if ((smsc[1] & 0x70) == 0x10)
+        g_string_append_c (number, '+');
+
+    for (i = 0; i < smsc_len - 1; i++) {
+        guint8 octet = smsc[i + 2];
+        guint8 low = octet & 0x0f;
+        guint8 high = octet >> 4;
+
+        if (low > 9) {
+            g_set_error (error, MM_CORE_ERROR, MM_CORE_ERROR_FAILED,
+                         "SIM EF-SMSP contains an invalid service centre address");
+            return NULL;
+        }
+        g_string_append_c (number, '0' + low);
+        if (high == 0x0f) {
+            if (i != smsc_len - 2)
+                goto invalid_padding;
+            break;
+        }
+        if (high > 9)
+            goto invalid_padding;
+        g_string_append_c (number, '0' + high);
+    }
+
+    if (number->len == 0 || (number->len == 1 && number->str[0] == '+'))
+        goto invalid_padding;
+    return g_string_free (g_steal_pointer (&number), FALSE);
+
+invalid_padding:
+    g_set_error (error, MM_CORE_ERROR, MM_CORE_ERROR_FAILED,
+                 "SIM EF-SMSP contains an invalid service centre address");
+    return NULL;
 }
